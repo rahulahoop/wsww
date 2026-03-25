@@ -8,7 +8,10 @@ const PAGE_DELAY_MS = 150
 const MAX_PAGES = 50
 const ENRICH_CONCURRENCY = 10
 
-const PROXY_LIST_URL = 'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt'
+const PROXY_LIST_URLS = [
+  'https://cdn.jsdelivr.net/gh/TheSpeedX/PROXY-List@master/http.txt',
+  'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+]
 const PROXY_REFRESH_MS = 60 * 60 * 1000   // refresh list every hour
 const PROXY_FAIL_COOLDOWN = 10 * 60 * 1000 // retry failed proxy after 10 min
 const PROXY_TIMEOUT_MS = 8000
@@ -41,19 +44,22 @@ function log(...args) {
 
 async function refreshProxies() {
   if (Date.now() - proxyState.lastFetch < PROXY_REFRESH_MS && proxyState.all.length > 0) return
-  try {
-    const res = await fetch(PROXY_LIST_URL)
-    const text = await res.text()
-    const proxies = text
-      .trim()
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))
-    proxyState.all = proxies
-    proxyState.lastFetch = Date.now()
-    log(`Loaded ${proxies.length} proxies from list`)
-  } catch (err) {
-    log('Failed to refresh proxy list:', err.message)
+  for (const url of PROXY_LIST_URLS) {
+    try {
+      const res = await fetch(url)
+      const text = await res.text()
+      const proxies = text
+        .trim()
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))
+      proxyState.all = proxies
+      proxyState.lastFetch = Date.now()
+      log(`Loaded ${proxies.length} proxies from ${url}`)
+      return
+    } catch (err) {
+      log(`Failed to fetch proxy list from ${url}: ${err.message}`)
+    }
   }
 }
 
