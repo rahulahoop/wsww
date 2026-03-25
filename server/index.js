@@ -5,7 +5,7 @@ import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
-import { getWatchlistInfo, scrapeWatchlist, enrichFilms, getTmdbDetails, getProxyStats } from './scraper.js'
+import { getWatchlistInfo, scrapeWatchlist, enrichFilms, getTmdbDetails, getProxyStats, warmProxies } from './scraper.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -94,4 +94,9 @@ if (IS_PROD && existsSync(distDir)) {
   app.get('*', (_req, res) => res.sendFile(join(distDir, 'index.html')))
 }
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`))
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`)
+  // Warm proxy pool on startup, then re-warm every hour after list refresh
+  warmProxies().catch((err) => console.error('[proxy warmup]', err.message))
+  setInterval(() => warmProxies().catch((err) => console.error('[proxy warmup]', err.message)), 60 * 60 * 1000)
+})

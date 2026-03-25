@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 interface Film {
   slug: string
@@ -186,6 +186,25 @@ async function pickAnother() {
 function formatRating(r: number | null | undefined) {
   return r != null ? r.toFixed(2) : null
 }
+
+// ── Dev proxy monitor ───────────────────────────────────────────────────────
+const proxyStats = ref<{ total: number; good: number; bad: number; lastFetch: number } | null>(null)
+let proxyPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function fetchProxyStats() {
+  try {
+    const res = await fetch('/api/proxy-stats')
+    proxyStats.value = await res.json()
+  } catch { /* ignore */ }
+}
+
+onMounted(() => {
+  fetchProxyStats()
+  proxyPollTimer = setInterval(fetchProxyStats, 5000)
+})
+onUnmounted(() => {
+  if (proxyPollTimer) clearInterval(proxyPollTimer)
+})
 </script>
 
 <template>
@@ -350,6 +369,15 @@ function formatRating(r: number | null | undefined) {
       </div>
 
     </div>
+    <!-- Dev: proxy stats -->
+    <div v-if="proxyStats" class="mt-10 w-full max-w-md font-mono text-xs bg-black/40 border border-[#2c3440] rounded-lg px-4 py-3 text-gray-500 flex gap-6">
+      <span>proxies <span class="text-gray-300">{{ proxyStats.total }}</span></span>
+      <span>good <span class="text-[#00c030]">{{ proxyStats.good }}</span></span>
+      <span>bad <span class="text-red-400">{{ proxyStats.bad }}</span></span>
+      <span v-if="proxyStats.lastFetch">loaded <span class="text-gray-400">{{ new Date(proxyStats.lastFetch).toLocaleTimeString() }}</span></span>
+      <span v-else class="text-yellow-500">not loaded yet</span>
+    </div>
+
     <!-- Footer -->
     <footer class="mt-16 text-center text-xs text-gray-600">
       <img src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg"

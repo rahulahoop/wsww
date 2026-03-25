@@ -12,7 +12,10 @@ const PROXY_LIST_URL = 'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/m
 const PROXY_REFRESH_MS = 60 * 60 * 1000   // refresh list every hour
 const PROXY_FAIL_COOLDOWN = 10 * 60 * 1000 // retry failed proxy after 10 min
 const PROXY_TIMEOUT_MS = 8000
-const MAX_PROXY_ATTEMPTS = 5
+const MAX_PROXY_ATTEMPTS = 10
+const CANARY_URL = `${LETTERBOXD_BASE}/films/`
+const CANARY_TARGET = 10  // stop once this many good proxies confirmed
+const CANARY_CONCURRENCY = 20
 
 const proxyState = {
   all: [],
@@ -52,6 +55,42 @@ async function refreshProxies() {
   } catch (err) {
     log('Failed to refresh proxy list:', err.message)
   }
+}
+
+/**
+ * Test proxies against a real Letterboxd page in the background.
+ * Stops once CANARY_TARGET good proxies are confirmed.
+ * Safe to call without awaiting — logs progress, never throws.
+ */
+export async function warmProxies() {
+  await refreshProxies()
+  if (proxyState.all.length === 0) {
+    log('Canary: no proxies to warm')
+    return
+  }
+
+  log(`Canary: warming proxy pool, targeting ${CANARY_TARGET} good proxies…`)
+  const candidates = shuffle([...proxyState.all])
+
+  for (let i = 0; i < candidates.length; i += CANARY_CONCURRENCY) {
+    if (proxyState.good.size >= CANARY_TARGET) break
+    const batch = candidates.slice(i, i + CANARY_CONCURRENCY)
+    await Promise.all(
+      batch.map(async (proxy) => {
+        if (proxyState.good.size >= CANARY_TARGET) return
+        try {
+          await fetchWithProxy(CANARY_URL, proxy)
+          proxyState.good.add(proxy)
+          proxyState.bad.delete(proxy)
+          log(`Canary: ${proxy} OK (${proxyState.good.size}/${CANARY_TARGET})`)
+        } catch {
+          proxyState.bad.set(proxy, Date.now())
+        }
+      }),
+    )
+  }
+
+  log(`Canary: done — ${proxyState.good.size} good proxies ready`)
 }
 
 function pickProxy() {
@@ -94,7 +133,12 @@ async function fetchLetterboxd(url) {
   let lastErr
   for (let attempt = 0; attempt < MAX_PROXY_ATTEMPTS; attempt++) {
     const proxy = pickProxy()
-    if (!proxy) throw new Error('No proxies available')
+    if (!proxy) {
+      const msg = proxyState.all.length === 0
+        ? 'Proxy list is empty — failed to load from GitHub. Please try again shortly.'
+        : 'All proxies are currently exhausted. Please try again in a few minutes.'
+      throw new Error(msg)
+    }
 
     try {
       const html = await fetchWithProxy(url, proxy)
@@ -109,7 +153,7 @@ async function fetchLetterboxd(url) {
       lastErr = err
     }
   }
-  throw new Error(`All ${MAX_PROXY_ATTEMPTS} proxy attempts failed: ${lastErr?.message}`)
+  throw new Error(`Unable to reach Letterboxd after ${MAX_PROXY_ATTEMPTS} attempts — proxies may be temporarily unavailable. Please try again shortly.`)
 }
 
 function shuffle(arr) {
