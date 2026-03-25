@@ -5,6 +5,5 @@ services:
       - "3004:3001"
     environment:
       - NODE_ENV=production
-      - PORT=3004
       - TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN}
     restart: unless-stopped

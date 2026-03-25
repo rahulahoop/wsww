@@ -5,7 +5,7 @@ import { createRequire } from 'module'
 import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
-import { getWatchlistInfo, scrapeWatchlist, enrichFilms, getTmdbDetails } from './scraper.js'
+import { getWatchlistInfo, scrapeWatchlist, enrichFilms, getTmdbDetails, getProxyStats } from './scraper.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -85,6 +85,7 @@ app.get('/api/tmdb-details', async (req, res) => {
 })
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
+app.get('/api/proxy-stats', (_req, res) => res.json(getProxyStats()))
 
 // Serve built Vue frontend in production
 const distDir = join(__dirname, '..', 'dist')

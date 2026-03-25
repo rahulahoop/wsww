@@ -1,11 +1,34 @@
 import * as cheerio from 'cheerio'
 import { TMDB } from 'tmdb-ts'
+import { ProxyAgent } from 'undici'
 
 const LETTERBOXD_BASE = 'https://letterboxd.com'
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 const PAGE_DELAY_MS = 150
 const MAX_PAGES = 50
 const ENRICH_CONCURRENCY = 10
+
+const PROXY_LIST_URL = 'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt'
+const PROXY_REFRESH_MS = 60 * 60 * 1000   // refresh list every hour
+const PROXY_FAIL_COOLDOWN = 10 * 60 * 1000 // retry failed proxy after 10 min
+const PROXY_TIMEOUT_MS = 8000
+const MAX_PROXY_ATTEMPTS = 5
+
+const proxyState = {
+  all: [],
+  good: new Set(),       // confirmed working
+  bad: new Map(),        // proxy -> timestamp of failure
+  lastFetch: 0,
+}
+
+export function getProxyStats() {
+  return {
+    total: proxyState.all.length,
+    good: proxyState.good.size,
+    bad: proxyState.bad.size,
+    lastFetch: proxyState.lastFetch,
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -13,11 +36,80 @@ function log(...args) {
   console.log('[scraper]', ...args)
 }
 
-async function fetchHtml(url) {
-  log(`GET ${url}`)
-  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
+async function refreshProxies() {
+  if (Date.now() - proxyState.lastFetch < PROXY_REFRESH_MS && proxyState.all.length > 0) return
+  try {
+    const res = await fetch(PROXY_LIST_URL)
+    const text = await res.text()
+    const proxies = text
+      .trim()
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))
+    proxyState.all = proxies
+    proxyState.lastFetch = Date.now()
+    log(`Loaded ${proxies.length} proxies from list`)
+  } catch (err) {
+    log('Failed to refresh proxy list:', err.message)
+  }
+}
+
+function pickProxy() {
+  const now = Date.now()
+  // Prefer known-good proxies
+  if (proxyState.good.size > 0) {
+    const arr = [...proxyState.good]
+    return arr[Math.floor(Math.random() * arr.length)]
+  }
+  // Fall back to untested or cooled-down bad proxies
+  const candidates = proxyState.all.filter((p) => {
+    const failedAt = proxyState.bad.get(p)
+    return !failedAt || now - failedAt >= PROXY_FAIL_COOLDOWN
+  })
+  if (candidates.length === 0) return null
+  return candidates[Math.floor(Math.random() * candidates.length)]
+}
+
+// Fetches a Letterboxd URL through a rotating proxy.
+// TMDB calls use tmdb-ts directly and are never proxied.
+async function fetchWithProxy(url, proxy) {
+  const dispatcher = new ProxyAgent(`http://${proxy}`, {
+    connectTimeout: PROXY_TIMEOUT_MS,
+    headersTimeout: PROXY_TIMEOUT_MS,
+    bodyTimeout: PROXY_TIMEOUT_MS,
+  })
+  const res = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT },
+    dispatcher,
+    signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.text()
+}
+
+async function fetchLetterboxd(url) {
+  await refreshProxies()
+  log(`GET ${url}`)
+
+  let lastErr
+  for (let attempt = 0; attempt < MAX_PROXY_ATTEMPTS; attempt++) {
+    const proxy = pickProxy()
+    if (!proxy) throw new Error('No proxies available')
+
+    try {
+      const html = await fetchWithProxy(url, proxy)
+      proxyState.good.add(proxy)
+      proxyState.bad.delete(proxy)
+      log(`  → proxy ${proxy} OK`)
+      return html
+    } catch (err) {
+      log(`  → proxy ${proxy} failed (${err.message})`)
+      proxyState.good.delete(proxy)
+      proxyState.bad.set(proxy, Date.now())
+      lastErr = err
+    }
+  }
+  throw new Error(`All ${MAX_PROXY_ATTEMPTS} proxy attempts failed: ${lastErr?.message}`)
 }
 
 function shuffle(arr) {
@@ -34,7 +126,7 @@ function shuffle(arr) {
  */
 export async function getWatchlistInfo(username) {
   const url = `${LETTERBOXD_BASE}/${username}/watchlist/`
-  const html = await fetchHtml(url)
+  const html = await fetchLetterboxd(url)
   const $ = cheerio.load(html)
 
   const countText = $('.js-watchlist-count').text().replace(/[^\d]/g, '')
@@ -79,7 +171,7 @@ export async function scrapeWatchlist(username, onProgress, capMode = 'all') {
 
     let html
     try {
-      html = await fetchHtml(`${LETTERBOXD_BASE}/${username}/watchlist/page/${page}/`)
+      html = await fetchLetterboxd(`${LETTERBOXD_BASE}/${username}/watchlist/page/${page}/`)
     } catch (err) {
       log(`  → skipping page ${page}: ${err.message}`)
       continue
@@ -103,7 +195,7 @@ export async function scrapeWatchlist(username, onProgress, capMode = 'all') {
  * Fetch a single film page → TMDB id/type + LbxD average rating.
  */
 export async function getFilmDetails(slug) {
-  const html = await fetchHtml(`${LETTERBOXD_BASE}/film/${slug}/`)
+  const html = await fetchLetterboxd(`${LETTERBOXD_BASE}/film/${slug}/`)
   const $ = cheerio.load(html)
   const body = $('body')
 
