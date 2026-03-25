@@ -1,6 +1,11 @@
 import * as cheerio from 'cheerio'
 import { TMDB } from 'tmdb-ts'
 import { ProxyAgent } from 'undici'
+import { readFileSync } from 'fs'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const LETTERBOXD_BASE = 'https://letterboxd.com'
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -20,8 +25,19 @@ const CANARY_URL = `${LETTERBOXD_BASE}/films/`
 const CANARY_TARGET = 10  // stop once this many good proxies confirmed
 const CANARY_CONCURRENCY = 20
 
+function loadBundledProxies() {
+  try {
+    const txt = readFileSync(join(__dirname, '..', 'proxies.txt'), 'utf8')
+    const proxies = txt.trim().split('\n').map((l) => l.trim()).filter((l) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))
+    log(`Loaded ${proxies.length} proxies from bundled file`)
+    return proxies
+  } catch {
+    return []
+  }
+}
+
 const proxyState = {
-  all: [],
+  all: loadBundledProxies(),
   good: new Set(),       // confirmed working
   bad: new Map(),        // proxy -> timestamp of failure
   lastFetch: 0,
