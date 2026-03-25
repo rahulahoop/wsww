@@ -6,7 +6,7 @@ interface Film {
   title: string
   letterboxdUrl: string
   lbxdRating?: number | null
-  lbxdPoster?: string | null
+  tmdbPoster?: string | null
   tmdbId?: string | null
   tmdbType?: string
 }
@@ -147,7 +147,7 @@ async function proceedWithScraping() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slugs: rawOverlap.map((f) => f.slug) }),
     })
-    const details: Record<string, { tmdbId: string | null; tmdbType: string; lbxdRating: number | null; lbxdPoster: string | null }> =
+    const details: Record<string, { tmdbId: string | null; tmdbType: string; lbxdRating: number | null; tmdbPoster: string | null }> =
       await enrichRes.json()
 
     // Merge ratings + sort by LbxD rating descending (unrated last)
@@ -337,8 +337,8 @@ function formatRating(r: number | null | undefined) {
               ]">
               <!-- Poster thumbnail -->
               <div class="shrink-0 w-7 h-10 rounded overflow-hidden bg-[#2c3440]">
-                <img v-if="film.lbxdPoster" :src="film.lbxdPoster" :alt="film.title"
-                  referrerpolicy="no-referrer" class="w-full h-full object-cover" />
+                <img v-if="film.tmdbPoster" :src="film.tmdbPoster" :alt="film.title"
+                  class="w-full h-full object-cover" />
               </div>
               <span class="flex-1 truncate">{{ film.title }}</span>
               <span v-if="film.lbxdRating" class="shrink-0 text-xs text-gray-500">

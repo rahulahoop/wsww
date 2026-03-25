@@ -114,32 +114,49 @@ export async function getFilmDetails(slug) {
   const match = ratingContent.match(/^([\d.]+)\s+out of 5/)
   const lbxdRating = match ? parseFloat(match[1]) : null
 
-  const imageMatch = html.match(/"image":"(https:\/\/a\.ltrbxd\.com\/resized\/film-poster\/[^"]+)"/)
-  const lbxdPoster = imageMatch ? imageMatch[1] : null
-
-  log(`Film details ${slug}: tmdb=${tmdbId} lbxd=${lbxdRating} poster=${lbxdPoster ? 'yes' : 'no'}`)
-  return { tmdbId, tmdbType, lbxdRating, lbxdPoster }
+  log(`Film details ${slug}: tmdb=${tmdbId} lbxd=${lbxdRating}`)
+  return { tmdbId, tmdbType, lbxdRating }
 }
 
 /**
  * Batch-fetch film details for an array of slugs, ENRICH_CONCURRENCY at a time.
- * Returns { [slug]: { tmdbId, tmdbType, lbxdRating } }
+ * If accessToken is provided, also fetches TMDB poster for each film.
+ * Returns { [slug]: { tmdbId, tmdbType, lbxdRating, tmdbPoster } }
  */
-export async function enrichFilms(slugs, onProgress) {
+export async function enrichFilms(slugs, onProgress, accessToken = null) {
+  const tmdbClient = accessToken ? new TMDB(accessToken) : null
   const results = {}
+
   for (let i = 0; i < slugs.length; i += ENRICH_CONCURRENCY) {
     const batch = slugs.slice(i, i + ENRICH_CONCURRENCY)
     const msg = `Fetching ratings ${i + 1}–${Math.min(i + ENRICH_CONCURRENCY, slugs.length)} of ${slugs.length}…`
     log(msg)
     onProgress?.(msg)
+
     const batchResults = await Promise.all(
-      batch.map((slug) =>
-        getFilmDetails(slug).catch(() => ({ tmdbId: null, tmdbType: 'movie', lbxdRating: null })),
-      ),
+      batch.map(async (slug) => {
+        try {
+          const details = await getFilmDetails(slug)
+          let tmdbPoster = null
+          if (tmdbClient && details.tmdbId) {
+            try {
+              const id = parseInt(details.tmdbId, 10)
+              const data = details.tmdbType === 'tv'
+                ? await tmdbClient.tvSeries.details(id)
+                : await tmdbClient.movies.details(id)
+              tmdbPoster = data.poster_path
+                ? `https://image.tmdb.org/t/p/w154${data.poster_path}`
+                : null
+            } catch { /* no poster */ }
+          }
+          return { ...details, tmdbPoster }
+        } catch {
+          return { tmdbId: null, tmdbType: 'movie', lbxdRating: null, tmdbPoster: null }
+        }
+      }),
     )
-    batch.forEach((slug, j) => {
-      results[slug] = batchResults[j]
-    })
+
+    batch.forEach((slug, j) => { results[slug] = batchResults[j] })
   }
   return results
 }

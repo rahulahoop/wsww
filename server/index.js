@@ -65,7 +65,7 @@ app.post('/api/enrich', async (req, res) => {
     return res.status(400).json({ error: 'slugs array required' })
   }
   try {
-    res.json(await enrichFilms(slugs))
+    res.json(await enrichFilms(slugs, null, process.env.TMDB_ACCESS_TOKEN ?? null))
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
