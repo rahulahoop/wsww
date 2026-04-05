@@ -271,13 +271,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.50, sum by (le, username) (rate(wsww_watchlist_scrape_duration_seconds_bucket[10m])))",
-          "legendFormat": "p50 {{username}}"
+          "expr": "histogram_quantile(0.50, rate(wsww_watchlist_scrape_duration_seconds_bucket[10m]))",
+          "legendFormat": "p50"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.95, sum by (le, username) (rate(wsww_watchlist_scrape_duration_seconds_bucket[10m])))",
-          "legendFormat": "p95 {{username}}"
+          "expr": "histogram_quantile(0.95, rate(wsww_watchlist_scrape_duration_seconds_bucket[10m]))",
+          "legendFormat": "p95"
         }
       ]
     },

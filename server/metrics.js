@@ -5,7 +5,6 @@ export const registry = new Registry()
 export const watchlistScrapeDuration = new Histogram({
   name: 'wsww_watchlist_scrape_duration_seconds',
   help: 'End-to-end time to scrape a user watchlist',
-  labelNames: ['username'],
   buckets: [1, 5, 10, 30, 60, 120, 300],
   registers: [registry],
 })

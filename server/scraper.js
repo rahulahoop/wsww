@@ -289,7 +289,7 @@ export async function getWatchlistInfo(username) {
  *   'all'    → every page (no cap)
  */
 export async function scrapeWatchlist(username, onProgress, capMode = 'all') {
-  const endScrape = watchlistScrapeDuration.startTimer({ username })
+  const endScrape = watchlistScrapeDuration.startTimer()
   const { filmCount, pageCount } = await getWatchlistInfo(username)
 
   let pagesToScrape
