@@ -129,6 +129,10 @@ async function refreshProxies() {
  * Safe to call without awaiting — logs progress, never throws.
  */
 export async function warmProxies() {
+  if (IS_DEV) {
+    log('Canary: skipped in dev mode')
+    return
+  }
   await refreshProxies()
   if (proxyState.all.length === 0) {
     log('Canary: no proxies to warm')
@@ -205,9 +209,18 @@ async function fetchWithProxy(url, proxy) {
   }
 }
 
+const IS_DEV = process.env.NODE_ENV !== 'production'
+
 async function fetchLetterboxd(url) {
-  await refreshProxies()
   log(`GET ${url}`)
+
+  if (IS_DEV) {
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.text()
+  }
+
+  await refreshProxies()
 
   let lastErr
   for (let attempt = 0; attempt < MAX_PROXY_ATTEMPTS; attempt++) {
