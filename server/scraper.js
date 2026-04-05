@@ -1,9 +1,17 @@
 import * as cheerio from 'cheerio'
 import { TMDB } from 'tmdb-ts'
 import { ProxyAgent } from 'undici'
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import {
+  watchlistScrapeDuration,
+  proxyRequestDuration,
+  proxyRequestsTotal,
+  proxyPoolGood,
+  proxyPoolBad,
+  proxyPoolTotal,
+} from './metrics.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -25,6 +33,8 @@ const CANARY_URL = `${LETTERBOXD_BASE}/films/`
 const CANARY_TARGET = 10  // stop once this many good proxies confirmed
 const CANARY_CONCURRENCY = 20
 
+const GOOD_PROXIES_FILE = process.env.GOOD_PROXIES_FILE || '/data/good_proxies.txt'
+
 function loadBundledProxies() {
   try {
     const txt = readFileSync(join(__dirname, '..', 'proxies.txt'), 'utf8')
@@ -36,9 +46,43 @@ function loadBundledProxies() {
   }
 }
 
+function loadPersistedGoodProxies() {
+  try {
+    const txt = readFileSync(GOOD_PROXIES_FILE, 'utf8')
+    const proxies = txt.trim().split('\n').map((l) => l.trim()).filter((l) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(l))
+    log(`Loaded ${proxies.length} persisted good proxies from ${GOOD_PROXIES_FILE}`)
+    return proxies
+  } catch {
+    return []
+  }
+}
+
+let _saveTimer = null
+function scheduleGoodProxiesSave() {
+  if (_saveTimer) clearTimeout(_saveTimer)
+  _saveTimer = setTimeout(() => {
+    try {
+      mkdirSync(dirname(GOOD_PROXIES_FILE), { recursive: true })
+      writeFileSync(GOOD_PROXIES_FILE, [...proxyState.good].join('\n') + '\n', 'utf8')
+      log(`Saved ${proxyState.good.size} good proxies to ${GOOD_PROXIES_FILE}`)
+    } catch (err) {
+      log(`Failed to save good proxies: ${err.message}`)
+    }
+  }, 5000)
+}
+
+function updateProxyGauges() {
+  proxyPoolGood.set(proxyState.good.size)
+  proxyPoolBad.set(proxyState.bad.size)
+  proxyPoolTotal.set(proxyState.all.length)
+}
+
+const _persistedGood = loadPersistedGoodProxies()
+const _bundled = loadBundledProxies()
+
 const proxyState = {
-  all: loadBundledProxies(),
-  good: new Set(),       // confirmed working
+  all: [...new Set([..._persistedGood, ..._bundled])],
+  good: new Set(),       // confirmed working this session
   bad: new Map(),        // proxy -> timestamp of failure
   lastFetch: 0,
 }
@@ -104,9 +148,12 @@ export async function warmProxies() {
           await fetchWithProxy(CANARY_URL, proxy)
           proxyState.good.add(proxy)
           proxyState.bad.delete(proxy)
+          updateProxyGauges()
+          scheduleGoodProxiesSave()
           log(`Canary: ${proxy} OK (${proxyState.good.size}/${CANARY_TARGET})`)
         } catch {
           proxyState.bad.set(proxy, Date.now())
+          updateProxyGauges()
         }
       }),
     )
@@ -134,18 +181,28 @@ function pickProxy() {
 // Fetches a Letterboxd URL through a rotating proxy.
 // TMDB calls use tmdb-ts directly and are never proxied.
 async function fetchWithProxy(url, proxy) {
-  const dispatcher = new ProxyAgent(`http://${proxy}`, {
-    connectTimeout: PROXY_TIMEOUT_MS,
-    headersTimeout: PROXY_TIMEOUT_MS,
-    bodyTimeout: PROXY_TIMEOUT_MS,
-  })
-  const res = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT },
-    dispatcher,
-    signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.text()
+  const endTimer = proxyRequestDuration.startTimer()
+  try {
+    const dispatcher = new ProxyAgent(`http://${proxy}`, {
+      connectTimeout: PROXY_TIMEOUT_MS,
+      headersTimeout: PROXY_TIMEOUT_MS,
+      bodyTimeout: PROXY_TIMEOUT_MS,
+    })
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT },
+      dispatcher,
+      signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const html = await res.text()
+    endTimer()
+    proxyRequestsTotal.inc({ status: 'success' })
+    return html
+  } catch (err) {
+    endTimer()
+    proxyRequestsTotal.inc({ status: 'failure' })
+    throw err
+  }
 }
 
 async function fetchLetterboxd(url) {
@@ -166,12 +223,16 @@ async function fetchLetterboxd(url) {
       const html = await fetchWithProxy(url, proxy)
       proxyState.good.add(proxy)
       proxyState.bad.delete(proxy)
+      updateProxyGauges()
+      scheduleGoodProxiesSave()
       log(`  → proxy ${proxy} OK`)
       return html
     } catch (err) {
       log(`  → proxy ${proxy} failed (${err.message})`)
       proxyState.good.delete(proxy)
       proxyState.bad.set(proxy, Date.now())
+      updateProxyGauges()
+      scheduleGoodProxiesSave()
       lastErr = err
     }
   }
@@ -215,6 +276,7 @@ export async function getWatchlistInfo(username) {
  *   'all'    → every page (no cap)
  */
 export async function scrapeWatchlist(username, onProgress, capMode = 'all') {
+  const endScrape = watchlistScrapeDuration.startTimer({ username })
   const { filmCount, pageCount } = await getWatchlistInfo(username)
 
   let pagesToScrape
@@ -254,6 +316,7 @@ export async function scrapeWatchlist(username, onProgress, capMode = 'all') {
   }
 
   log(`Finished ${username}: ${films.size} films from ${pagesToScrape.length} pages`)
+  endScrape()
   return films
 }
 

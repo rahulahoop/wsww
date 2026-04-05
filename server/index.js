@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { join, dirname } from 'path'
 import { existsSync } from 'fs'
 import { getWatchlistInfo, scrapeWatchlist, enrichFilms, getTmdbDetails, getProxyStats, warmProxies } from './scraper.js'
+import { registry } from './metrics.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -86,6 +87,10 @@ app.get('/api/tmdb-details', async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
 app.get('/api/proxy-stats', (_req, res) => res.json(getProxyStats()))
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', registry.contentType)
+  res.end(await registry.metrics())
+})
 
 // Serve built Vue frontend in production
 const distDir = join(__dirname, '..', 'dist')

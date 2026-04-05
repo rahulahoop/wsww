@@ -11,6 +11,10 @@ interface Film {
   tmdbType?: string
 }
 
+interface NearMatchFilm extends Film {
+  presentIn: string[]
+}
+
 interface PickResult extends Film {
   poster: string | null
   overview: string | null
@@ -32,6 +36,8 @@ const progress = ref('')
 const error = ref('')
 const result = ref<PickResult | null>(null)
 const overlap = ref<Film[]>([])
+const nearMatches = ref<NearMatchFilm[]>([])
+const picking = ref(false)
 
 // Cap warning state
 const pageInfos = ref<Record<string, { filmCount: number; pageCount: number }>>({})
@@ -90,6 +96,7 @@ async function findMovie() {
   error.value = ''
   result.value = null
   overlap.value = []
+  nearMatches.value = []
   pageInfos.value = {}
   capDecisions.value = {}
 
@@ -135,6 +142,26 @@ async function proceedWithScraping() {
     const slugSets = filmLists.map((films) => new Set(films.map((f) => f.slug)))
     const rawOverlap = filmLists[0].filter((f) => slugSets.slice(1).every((s) => s.has(f.slug)))
 
+    // Near matches: films in 2+ but not all watchlists (only meaningful with 3+ users)
+    if (activeUsers.length >= 3) {
+      const nearMap = new Map<string, NearMatchFilm>()
+      filmLists.forEach((films, i) => {
+        const username = activeUsers[i]
+        films.forEach((film) => {
+          if (slugSets.every((s) => s.has(film.slug))) return // already in full overlap
+          const entry = nearMap.get(film.slug)
+          if (entry) {
+            entry.presentIn.push(username)
+          } else {
+            nearMap.set(film.slug, { ...film, presentIn: [username] })
+          }
+        })
+      })
+      nearMatches.value = [...nearMap.values()]
+        .filter((f) => f.presentIn.length >= 2)
+        .sort((a, b) => b.presentIn.length - a.presentIn.length)
+    }
+
     if (rawOverlap.length === 0) {
       throw new Error(`No movies in common between ${activeUsers.join(', ')}`)
     }
@@ -178,9 +205,17 @@ async function pickFrom(candidates: Film[]) {
 }
 
 async function pickAnother() {
-  if (!overlap.value.length || !result.value) return
+  if (!overlap.value.length || !result.value || picking.value) return
   const candidates = overlap.value.filter((f) => f.slug !== result.value!.slug)
-  await pickFrom(candidates)
+  if (candidates.length === 0) return
+  picking.value = true
+  try {
+    await pickFrom(candidates)
+  } catch (err: any) {
+    error.value = err.message
+  } finally {
+    picking.value = false
+  }
 }
 
 function formatRating(r: number | null | undefined) {
@@ -333,8 +368,9 @@ onUnmounted(() => {
         <!-- Pick another -->
         <div class="px-5 pt-3 pb-5 sm:px-6 sm:pb-6">
           <button @click="pickAnother"
-            class="w-full bg-[#2c3440] hover:bg-[#363f4d] text-gray-300 font-medium text-sm py-2.5 rounded-lg transition-colors cursor-pointer">
-            Pick another
+            :disabled="picking || overlap.length <= 1"
+            class="w-full bg-[#2c3440] hover:bg-[#363f4d] text-gray-300 font-medium text-sm py-2.5 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+            {{ picking ? 'Finding…' : 'Pick another' }}
           </button>
         </div>
       </div>
@@ -362,6 +398,32 @@ onUnmounted(() => {
               <span class="flex-1 truncate">{{ film.title }}</span>
               <span v-if="film.lbxdRating" class="shrink-0 text-xs text-gray-500">
                 ★ {{ formatRating(film.lbxdRating) }}
+              </span>
+            </a>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Near matches (3+ users only) -->
+      <div v-if="nearMatches.length > 0">
+        <p class="text-xs uppercase tracking-widest text-gray-500 mb-3">
+          {{ nearMatches.length }} near matches — on some but not all watchlists
+        </p>
+        <ul class="bg-[#1e2429] border border-[#2c3440] rounded-2xl overflow-y-auto max-h-[320px] divide-y divide-[#2c3440]">
+          <li v-for="film in nearMatches" :key="film.slug">
+            <a :href="film.letterboxdUrl" target="_blank"
+              class="flex items-center gap-3 px-3 py-2 text-sm no-underline text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors">
+              <div class="shrink-0 w-7 h-10 rounded overflow-hidden bg-[#2c3440]">
+                <img v-if="film.tmdbPoster" :src="film.tmdbPoster" :alt="film.title"
+                  class="w-full h-full object-cover" />
+              </div>
+              <span class="flex-1 truncate">{{ film.title }}</span>
+              <!-- User presence badges -->
+              <span class="shrink-0 flex gap-1">
+                <span v-for="u in film.presentIn" :key="u"
+                  class="text-xs bg-[#2c3440] text-gray-400 px-1.5 py-0.5 rounded font-mono leading-tight">
+                  {{ u.slice(0, 2).toUpperCase() }}
+                </span>
               </span>
             </a>
           </li>

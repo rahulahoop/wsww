@@ -6,4 +6,7 @@ services:
     environment:
       - NODE_ENV=production
       - TMDB_ACCESS_TOKEN=${TMDB_ACCESS_TOKEN}
+      - GOOD_PROXIES_FILE=/data/good_proxies.txt
+    volumes:
+      - ./data:/data
     restart: unless-stopped
