@@ -59,8 +59,9 @@ function loadPersistedGoodProxies() {
 
 let _saveTimer = null
 function scheduleGoodProxiesSave() {
-  if (_saveTimer) clearTimeout(_saveTimer)
+  if (_saveTimer) return // already queued, let it fire
   _saveTimer = setTimeout(() => {
+    _saveTimer = null
     try {
       mkdirSync(dirname(GOOD_PROXIES_FILE), { recursive: true })
       writeFileSync(GOOD_PROXIES_FILE, [...proxyState.good].join('\n') + '\n', 'utf8')
